@@ -1,0 +1,31 @@
+#!/bin/bash
+#Make sure each project under /ifs/proj/*/"snapshot$|scratch$|backup$" has a quota and an automount map"
+
+mQuotas=$(ssh root@hydra-dns "sh -c \"ls -1d /ifs/proj/*/snapshot/*;ls -1d /ifs/proj/*/scratch/*; ls -1d /ifs/proj/*/backup/*/*\" |xargs -I % sh -c \"isi get -dD %|grep -q Quota||echo %\"")
+
+if [ -z "$mQuotas" ]; then
+    exit
+fi
+
+DISKS=""
+for I in $mQuotas;  do
+   echo $I
+   DISK=$(basename $I)
+   YP=$(ypcat -k atl.auto.proj|grep $DISK|grep -i hydra:)
+   DISKS+="$YP\n"
+done
+BODY="Hydra missing project quotas\n"
+BODY+="--------------------------------\n"
+BODY+=$mQuotas
+BODY+="\n\n"
+BODY+="Hydra NIS auto proj map found for missing quotas\n"
+BODY+="--------------------------------------\n"
+BODY+=$DISKS
+
+if [ -t 1 ] ; then
+   echo -e $BODY
+fi
+
+#echo -e $BODY|mail -s "Isi Projects Quota Check Report $(date)" dl.isilon_eng.aBiz.com
+echo -e $BODY|mail -s "Isi Projects Quota Check Report $(date)" midenney.aBiz.com
+

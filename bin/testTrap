@@ -1,0 +1,1 @@
+snmptrap -v 2c -c TestaBizstorage atlvdiskcrawl01 '' '12124.250.12.1.7' s "directory /ifs/data/testQuota"

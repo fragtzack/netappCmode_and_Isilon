@@ -1,0 +1,146 @@
+#!/tool/pandora/bin/bash
+#===============================================================================
+#
+#     FILE:  autodel
+#     DESCRIPTION: Delete any nfs /proj -p <directory> children files with mtime > 31 days. Only delete directies if empty and mtime > 31 days
+#     $Author: midenney $
+#     COMPANY:  aBiz
+#     CREATED:  7/23/2020
+#     $Revision: 1.9 $
+#     $Source: /tool/sysadmin/CVSROOT/makefs/makefs/bin/autodel,v $
+#===============================================================================
+FIND='/tool/pandora64/.package/findutils-4.6.0-patch/bin/find'
+DIRNAME='/tool/pandora/bin/dirname'
+ID='/tool/pandora/bin/id'
+MKDIR='/tool/pandora/bin/mkdir'
+TEST='/tool/pandora/bin/test'
+ECHO='/tool/pandora/bin/echo'
+XARGS='/tool/pandora/bin/xargs'
+STAT='/tool/pandora/bin/stat'
+DF='/tool/pandora/bin/df'
+AWK='/tool/pandora/bin/awk'
+CUT='/tool/pandora/bin/cut'
+TAIL='/tool/pandora/bin/tail'
+MKDIR='/tool/pandora/bin/mkdir'
+EGREP='/tool/pandora/bin/egrep'
+TPUT='/tool/pandora/bin/tput'
+
+bold=$($TPUT bold)
+norm=$($TPUT sgr0)
+
+usage(){
+   $ECHO -e "${bold}NAME${norm}"
+   $ECHO -e "\tautodel - Delete files and empty directories."
+   $ECHO -e "${bold}SYNOPSIS${norm}"
+   $ECHO -e "\t${bold}autodel${norm} [-donrh] -p <path> -m <mtime>"
+   $ECHO -e "${bold}DESCRIPTION${norm}"
+   $ECHO -e "\tAutodel will delete files and empty directories older then "
+   $ECHO -e "\t<mtime> days from <path>. All deletes will be logged to "
+   $ECHO -e "\t../var/log/autodel.log"
+   $ECHO -e "${bold}OPTIONS${norm}"
+   $ECHO -e "\t-p = <path> = directory path to process."
+   $ECHO -e "\t-m = <mtime> = mtime in days."
+   $ECHO -e "\t-d = dry run, do not actually delete."
+   $ECHO -e "\t-o = ignore path requirement safety checks."
+   $ECHO -e "\t-n = ignore NFS requirement safety check."
+   $ECHO -e "\t-r = ignore root user safety check."
+   $ECHO -e "\t-h = help."
+   exit 1
+}
+delete='-delete'
+while getopts "dhnom:p:" options; do
+   case "${options}" in 
+     p)
+       cpath="${OPTARG}"
+       ;;
+     d)
+       delete=""
+       dry="dry"
+       ;;
+     m)
+       mtime="${OPTARG}"
+       ;;
+     o)
+       override=1
+       ;;
+     n)
+       nfsoverride=1
+       ;;
+     r)
+       rootu=1
+       ;;
+     :)
+       $ECHO "Error: -${OPTARG} requires an argument."
+       usage
+       ;;
+     *)
+       usage
+       ;;
+   esac
+done
+
+shift $(expr $OPTIND - 1)
+if [ $1 ] ; then
+   $ECHO "${bold}ERROR${norm}: $1 parameter not recognized"
+   usage
+fi
+
+if [ -z "$cpath" ] ; then
+   $ECHO -e "\n${bold}ERROR${norm}: -p <directory path> not specified"
+fi
+
+if [ -z "$mtime" ] ; then
+   $ECHO -e "\n${bold}ERROR${norm}: -m <mtime> not specified"
+fi
+
+if [[ -z "$cpath" || -z "$mtime" ]] ; then
+   usage
+fi
+
+##stat in case of hung path or non-existing
+$STAT $cpath >/dev/null || { echo "${bold}ERROR${norm}: Unable to stat $cpath";exit 4;}
+
+if [ ! -d "$cpath" ] ; then
+   $ECHO -e "\n${bold}ERROR${norm}: $cpath is not a directory"
+   usage
+fi
+
+if [[ ! $rootu && $($ID -u) !=  0 ]] ; then
+   $ECHO -e "\n${bold}ERROR${norm}: Must be root user"
+   exit 2
+fi
+
+MTYPE=$($DF -PT $cpath|$TAIL -n 1|$AWK '{print $2}')
+if [[ ! $nfsoverride && $MTYPE != 'nfs' ]] ; then
+   $ECHO -e "\n$cpath must reside on NFS file system"
+   exit 6
+fi
+
+if [[ ! $override && $($ECHO $cpath|$CUT -d/ -f2) != 'proj' ]] ; then
+   echo "$cpath must start with /proj/"
+   exit 7
+fi
+
+BIN=$(cd $($DIRNAME $0) && pwd) #script location
+cd $BIN
+
+$TEST -d ../var/log || $MKDIR -p ../var/log
+LOGF='../var/log/autodel.log'
+
+$ECHO "`date` autodel START" >> $LOGF
+
+$ECHO "`date` Finding directories mtime +$mtime START" >> $LOGF
+#cdirs - consider directores to delete later
+cdirs=$($FIND $cpath -mindepth 1 -depth -type d -and -mtime +$mtime|$EGREP -v -e /.ifsvar/ -e /.ifsvar$ -e /.snapshot/ -e /.snapshot$)
+
+$ECHO "`date` - $dry DELETED FILES START" >> $LOGF
+$ECHO "--------------------------------------------------" >> $LOGF
+$FIND $cpath -type f -and -mtime +$mtime -ls $delete >> $LOGF || exit 8
+$ECHO "--------------------------------------------------" >> $LOGF
+$ECHO "`date` - $dry DELETED FILES END" >> $LOGF
+
+$ECHO "`date` - $dry DELETED DIRS START" >> $LOGF
+$ECHO "--------------------------------------------------" >> $LOGF
+$ECHO "$cdirs" | $XARGS -i $FIND {} -maxdepth 0 -empty -ls $delete >> $LOGF || exit 9
+$ECHO "--------------------------------------------------" >> $LOGF
+$ECHO "`date` - $dry DELETED DIRS END" >> $LOGF

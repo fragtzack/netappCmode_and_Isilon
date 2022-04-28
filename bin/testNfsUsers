@@ -1,0 +1,119 @@
+#!/usr/bin/perl
+use v5.10;
+use Data::Dumper;
+use Getopt::Long qw(GetOptions);
+
+##a comment test
+
+### GLOBALS ###
+my $just;
+my $testPath;
+my $userCnt=1000;
+my $dry;
+my $verbose;
+my $file;
+my @fullUsers;
+my @users;
+my $enabled;
+my $banGroup;
+my $unixname;
+### END GLOBALS ###
+
+GetOptions("just" => \$just,
+           "path=s" => \$testPath,
+           "users=i" => \$userCnt,
+           "dry" => \$dry,
+           "verbose" => \$verbose,
+           "file=s" => \$file,
+          );
+
+###### SANITY CHECKS ####
+unless (getpwuid($<) eq 'root'){
+   say "Must be root user";
+   exit 3;
+}
+if (!$just and !$testPath){
+  print "Usage: testNfsUsers -p <path> | -j \n        [-u <cnt>] [-v] [-d] [-f <file>]\nOPTIONS\n  -p <path> =  test <path>\n  -j Just print user names to be tested\n  -u <user count> Optional number of users, defaults to 1000\n  -v verbose\n  -d dry run, dont run test\n  -f <file> Use <file> as the list of users instead of getting list from adquery every time.\n";
+  print "\n\nRecommended to use -f <file> to perform like for like tests.\n";
+  exit 1;
+}
+if ($testPath and ! -d $testPath){
+   print "$testPath not found\n";
+   exit 4;
+}
+###### END SANITY CHECKS ####
+
+sub verbose{
+   if ($verbose) {say @_}
+}
+
+#my $acmd = "adquery user -F -d -G -e midenney -e glow -e DZheng -e GlennM"; #glow is member of ccppd.er
+unless ($file){
+   my $acmd = "adquery user -F -n -d -G";
+   verbose $acmd;
+   @fullUsers = qx/$acmd/;
+   chomp @fullUsers;
+} else {
+   #open (FILE, $file) or die "Unable to open $file";
+   unless (open (FILE, $file) ) {
+      say "Unable to open $file";
+      exit 6;
+   }
+   @users = <FILE>;
+   chomp @users;
+}
+
+unless (@users) {
+   verbose "sanitizing user list to remove disabled accounts and no accounts member of ccppd.er";
+   for (reverse @fullUsers) {
+      print $_."\n";
+      if (/^\S+:unixname:(\S+)$/){
+         $unixname = $1;
+         #print "$unixname $banGroup\n";
+         if (!$banGroup and $enabled){
+            push(@users,$unixname);
+         }
+         #print "users ".scalar @users."\n";
+         if (scalar @users >= $userCnt){
+            last;
+         }
+         $banGroup = 0;
+         $enabled = 0;
+         $unixname = "";
+         next;
+      }
+      if (/^\S+:accountDisabled(\S+)$/){
+         $enabled = $1;
+         next;
+      }
+      if (/^\S+:unixGroups(\S+)$/){
+         my $Groups = $1;
+         if ($Groups =~ /.*ccppd\.er.*/){
+            $banGroup = 1;
+         }
+      }
+   }#end for
+}#end unless $file
+
+if ($just){
+   for (@users){
+      say $_;
+   }
+   exit;
+}
+
+verbose "Running test for $usrCnt users...\n";
+my $startEpoch = time();
+for my $luser (@users){
+   my $cmd = "/sbin/runuser $luser -m --session-command '/bin/touch $testPath/$luser.file'";
+   verbose $cmd;
+   unless ($dry) {system($cmd)};
+   $cmd = "/sbin/runuser  $luser -m --session-command '/bin/rm -f $testPath/$luser.file'";
+   verbose $cmd;
+   unless ($dry) {system($cmd)};
+}
+my $endEpoch = time();
+
+my $elapsed = $endEpoch - $startEpoch;
+
+print "User tests took $elapsed seconds\n"
